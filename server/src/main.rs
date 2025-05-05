@@ -15,6 +15,8 @@ fn handle_client(mut stream: TcpStream) {
     }
 }
 
+/// TODO : Serde pour bdd json
+
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").expect("Impossible de lier le serveur sur le port 7878");
     println!("Le serveur est en écoute sur le port 7878");

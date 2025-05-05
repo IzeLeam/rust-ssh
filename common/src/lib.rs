@@ -8,12 +8,18 @@ pub mod protocol {
 
 // Module pour la gestion des connexions et sécurisation (exemple basique)
 pub mod network {
-    use std::net::TcpStream;
-    use std::io::{self, Write, Read};
+    use tokio::net::TcpStream;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use std::io;
+
+    pub const SERVER_PORT: u16 = 9999;
+    pub const SERVER_ADDRESS: &str = "127.0.0.1";
 
     /// Envoi une donnée sur une connexion TCP.
     pub fn envoyer_donnees(mut stream: TcpStream, data: &str) -> io::Result<()> {
-        stream.write_all(data.as_bytes())
+        let data_bytes = data.as_bytes();
+        stream.write_all(data_bytes).await()?;
+        Ok(())
     }
 
     /// Réception des données depuis une connexion TCP.
@@ -26,6 +32,12 @@ pub mod network {
 
 // Module d'authentification (placez ici votre logique, par exemple via un trait)
 pub mod auth {
+
+    pub enum AuthType {
+        Password,
+        Certificate,
+    }
+    
     /// Définit le comportement pour un authentificateur.
     pub trait Authenticator {
         fn authentifier(&self, identifiant: &str, secret: &str) -> bool;
@@ -34,6 +46,10 @@ pub mod auth {
     /// Un authentificateur basé sur un mot de passe.
     pub struct PasswordAuth {
         pub password: String,
+    }
+
+    pub struct CertificateAuth {
+        pub key: String,
     }
 
     impl Authenticator for PasswordAuth {
