@@ -1,8 +1,32 @@
 // Module pour le protocole
 pub mod protocol {
+    use serde::{Serialize, Deserialize};
     /// Affiche la version du protocole utilisé.
     pub fn afficher_version() {
         println!("Protocole d'administration à distance, version 0.1.0");
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum TypedMessage {
+    Command(Command),
+    Auth(Auth)
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub struct Command {
+    command: String,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum AuthMethod {
+    Password,
+    Certificate,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub struct Auth {
+    auth_method: AuthMethod,
+    secret: Vec<u8>,
     }
 }
 
@@ -16,16 +40,16 @@ pub mod network {
     pub const SERVER_ADDRESS: &str = "127.0.0.1";
 
     /// Envoi une donnée sur une connexion TCP.
-    pub fn envoyer_donnees(mut stream: TcpStream, data: &str) -> io::Result<()> {
+    pub async fn envoyer_donnees(mut stream: TcpStream, data: &str) -> io::Result<()> {
         let data_bytes = data.as_bytes();
-        stream.write_all(data_bytes).await()?;
+        stream.write_all(data_bytes).await?;
         Ok(())
     }
 
     /// Réception des données depuis une connexion TCP.
-    pub fn recevoir_donnees(mut stream: TcpStream) -> io::Result<String> {
+    pub async fn recevoir_donnees(mut stream: TcpStream) -> io::Result<String> {
         let mut buffer = [0; 512];
-        let size = stream.read(&mut buffer)?;
+        let size = stream.read(&mut buffer).await?;
         Ok(String::from_utf8_lossy(&buffer[..size]).to_string())
     }
 }
