@@ -2,7 +2,7 @@
 pub mod protocol {
     use serde::{Serialize, Deserialize};
 
-    use crate::auth::AuthType;
+    use crate::auth::AuthMethod;
 
     /// Affiche la version du protocole utilisé.
     pub fn print_protocol_version() {
@@ -21,14 +21,8 @@ pub mod protocol {
     }
 
     #[derive(Serialize, Deserialize)]
-    pub enum AuthMethod {
-        Password,
-        Certificate,
-    }
-
-    #[derive(Serialize, Deserialize)]
     pub struct Auth {
-        auth_method: AuthType,
+        auth_method: AuthMethod,
         secret: Vec<u8>,
     }
 }
@@ -60,8 +54,8 @@ pub mod network {
 pub mod auth {
     use serde::{Serialize, Deserialize};
 
-    #[derive(Serialize, Deserialize)]
-    pub enum AuthType {
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    pub enum AuthMethod {
         Password,
         Certificate,
     }

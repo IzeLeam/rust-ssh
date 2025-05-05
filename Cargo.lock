@@ -68,7 +68,6 @@ name = "common"
 version = "0.1.0"
 dependencies = [
  "serde",
- "serde_json",
  "tokio",
 ]
 
@@ -246,6 +245,8 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "common",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
