@@ -86,7 +86,7 @@ async fn main() {
                 }
             }
             ClientState::Connected => {
-                print!("> ");
+                print!("{} > ", cli.username);
                 std::io::stdout().flush().unwrap();
                 std::io::stdin().read_line(&mut stdin_buffer).expect("Erreur de lecture de la ligne");
                 // TODO récupération char par char pour le tab completion

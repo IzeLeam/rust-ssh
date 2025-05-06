@@ -17,10 +17,6 @@ use std::{fs::File, io::BufReader};
 mod filesys;
 use crate::filesys::filesys::*;
 
-use std::rc::Rc;
-use std::sync::Weak;
-use std::cell::RefCell;
-
 mod database;
 use crate::database::database::Database;
 
@@ -50,13 +46,13 @@ async fn authenticate_client(auth_method: AuthMethod, username: String, secret: 
     }
 }
 
-async fn process_command(command: String, node: Arc<Mutex<Rc<RefCell<Node>>>>) -> Result<String, String> {
+async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<String, String> {
     let mut parts = command.trim().split_whitespace();
 
     match parts.next() {
         Some("pwd") => {
             let node_guard = node.lock().await;
-            Ok(Node::pwd(Rc::clone(&node_guard)))
+            Ok(Node::pwd(&node_guard).to_string())
         },
         Some("cd") => {
             if let Some(dir) = parts.next() {
@@ -73,8 +69,7 @@ async fn process_command(command: String, node: Arc<Mutex<Rc<RefCell<Node>>>>) -
         },
         Some("ls") => {
             let current = node.lock().await;
-            let current_borrowed = current.borrow();
-            Ok(current_borrowed.ls().join(" "))
+            Ok(current.ls().join(" "))
         },
         _ => Err("Unknown command".into()),
     }
@@ -123,23 +118,11 @@ async fn handle_client(mut stream: TlsStream<TcpStream>, root: Arc<Mutex<Node>>,
                             }
                         }
                     },
-                    TypedMessage::TabComplete { stdin } => {
-                        if stdin.split(' ').count() > 1 {
-                            let mut parts = stdin.split_whitespace();
-                            let last_part = parts.next_back().unwrap();
-                            let node_guard = node.lock().await;
-                            let completions = node_guard.tab_complete_arg(last_part);
-                            let response = TypedMessage::TabCompleteResponse { completions: completions };
-                            let serialized_response = serde_json::to_string(&response).unwrap();
-                            stream.write_all(serialized_response.as_bytes()).await?;
-                        } else {
-                            let node_guard = node.lock().await;
-                            let completions = node_guard.tab_complete(&stdin);
-
-                            let response = TypedMessage::TabCompleteResponse { completions: completions };
-                            let serialized_response = serde_json::to_string(&response).unwrap();
-                            stream.write_all(serialized_response.as_bytes()).await?;
-                        }
+                    TypedMessage::TabComplete { .. } => {
+                        let completions: Vec<String> = Vec::new();
+                        let tab_complete_response = TypedMessage::TabCompleteResponse { completions };
+                        let serialized_response = serde_json::to_string(&tab_complete_response).unwrap();
+                        stream.write_all(serialized_response.as_bytes()).await?;
                     },
                     TypedMessage::Auth { auth_method, username, secret } => {
                         match authenticate_client(auth_method, username, secret, &db).await {
