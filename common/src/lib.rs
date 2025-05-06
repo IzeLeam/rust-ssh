@@ -2,6 +2,12 @@ pub mod crypto {
     use argon2::{Argon2, PasswordHasher, PasswordVerifier};
     use argon2::password_hash::SaltString;
 
+    /// Hash a password using Argon2
+    ///
+    /// # Arguments
+    /// * `password` - The password to hash
+    /// # Returns
+    /// * The hashed password as a string
     pub fn hash_password(password: &str) -> String {
         let argon2 = Argon2::default();
         let salt = rand::random::<[u8; 16]>();
@@ -12,20 +18,17 @@ pub mod crypto {
         key_hash.to_string()
     }
 
+    /// Verify a password if it matches the hash
+    ///
+    /// # Arguments
+    /// * `password` - The password to verify
+    /// * `hash` - The hash to verify against
+    /// # Returns
+    /// * `true` if the password matches the hash, `false` otherwise
     pub fn verify_password(password: &str, hash: &str) -> bool {
         let argon2 = Argon2::default();
         let parsed_hash = argon2::password_hash::PasswordHash::new(hash).expect("Failed to parse hash");
         argon2.verify_password(password.as_bytes(), &parsed_hash).is_ok()
-    }
-
-    pub fn encrypt(data: &[u8], _key: &[u8]) -> Vec<u8> {
-        // Placeholder for encryption logic
-        data.to_vec()
-    }
-
-    pub fn decrypt(data: &[u8], _key: &[u8]) -> Vec<u8> {
-        // Placeholder for decryption logic
-        data.to_vec()
     }
 
     #[cfg(test)]
@@ -44,13 +47,19 @@ pub mod crypto {
 pub mod protocol {
     use serde::{Serialize, Deserialize};
 
-    use crate::auth::AuthMethod;
-
     pub enum ClientState {
         Authentication(i32),
         Connected
     }
 
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    pub enum AuthMethod {
+        Password,
+        Certificate, // Not implemented yet
+    }
+
+    /// Both server and client have their own message types
+    /// The response types are only used by the server
     #[derive(Serialize, Deserialize, PartialEq)]
     pub enum TypedMessage {
         Command { command: String },
@@ -63,20 +72,11 @@ pub mod protocol {
 }
 
 pub mod network {
+    // Constants for the server
     pub const SERVER_PORT: u16 = 9999;
     pub const SERVER_ADDRESS: &str = "127.0.0.1";
 
     pub fn get_address() -> String {
         format!("{}:{}", SERVER_ADDRESS, SERVER_PORT)
-    }
-}
-
-pub mod auth {
-    use serde::{Serialize, Deserialize};
-
-    #[derive(Serialize, Deserialize, Debug, PartialEq)]
-    pub enum AuthMethod {
-        Password,
-        Certificate,
     }
 }

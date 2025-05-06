@@ -107,5 +107,32 @@ pub mod filesys {
 
         root
     }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_tree() {
+        let root = filesys::create_tree();
+        assert_eq!(root.name, "root");
+        assert_eq!(root.node_type, filesys::NodeType::Directory);
+        assert_eq!(root.ls(), vec!["dir1", "dir2", "dir3"]);
+    }
+
+    #[test]
+    fn test_ls() {
+        let root = filesys::create_tree();
+        let dir1 = root.cd("dir1").unwrap();
+        assert_eq!(dir1.ls(), vec!["file1.txt", "file2.txt"]);
+    }
+
+    #[test]
+    fn test_cd() {
+        let root = filesys::create_tree();
+        let dir1 = root.cd("dir1").unwrap();
+        let file1 = dir1.cd("file1.txt");
+        assert!(file1.is_none());
+    }
 }

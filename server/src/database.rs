@@ -16,6 +16,7 @@ pub mod database {
         pub users: HashMap<String, User>,
     }
 
+    // Constant file name for the database
     const DB_FILE: &str = "users.json";
 
     impl User {
@@ -28,8 +29,11 @@ pub mod database {
         }
     }
 
+    /// The database is used to store the users and their hashed passwords
+    /// The format of the database is a JSON file thanks to the serde_json lib
     impl Database {
         pub fn new() -> Self {
+            // Initialize the database file if it doesn't exist
             if File::open(DB_FILE).is_err() {
                 File::create(DB_FILE).expect("Erreur de création de la base de données");
             }
@@ -38,6 +42,16 @@ pub mod database {
             }
         }
 
+        /// Add a user to the database
+        /// The user is added only if it doesn't exist already
+        /// 
+        /// # Arguments
+        /// * `username` - The username of the user
+        /// * `password` - The password of the user
+        /// * `pubkey` - The public key of the user (not implemented yet)
+        /// # Returns
+        /// * `Ok(())` if the user was added successfully
+        /// * `Err(String)` if the user already exists
         pub fn add_user(&mut self, username: String, password: String, pubkey: String) -> Result<(), String> {
             if self.users.contains_key(&username) {
                 return Err(String::from("L'utilisateur existe déjà"));
@@ -51,14 +65,30 @@ pub mod database {
             Ok(())
         }
 
+        /// Remove a user from the database
+        /// 
+        /// # Arguments
+        /// * `username` - The username of the use
         pub fn _remove_user(&mut self, username: &str) {
             self.users.remove(username);
         }
 
+        /// Get a user from the database
+        /// 
+        /// # Arguments
+        /// * `username` - The username of the user
+        /// # Returns
+        /// * `Some(User)` if the user exists
+        /// * `None` if the user doesn't exist
         pub fn get_user(&self, username: &str) -> Option<&User> {
             self.users.get(username)
         }
 
+        /// Load the users from the database file
+        ///
+        /// # Returns
+        /// * `Ok(())` if the users were loaded successfully
+        /// * `Err(String)` if there was an error loading the users
         pub fn load_users(&mut self) {
             File::open(DB_FILE)
                 .and_then(|file| {
@@ -72,6 +102,11 @@ pub mod database {
                 });
         }
 
+        /// Save the users to the database file
+        ///
+        /// # Returns
+        /// * `Ok(())` if the users were saved successfully
+        /// * `Err(String)` if there was an error saving the users
         pub fn save_users(&self) {
             File::create(DB_FILE)
                 .and_then(|file| {
@@ -87,7 +122,6 @@ pub mod database {
     }
 }
 
-// TESTS
 #[cfg(test)]
 mod tests {
     use super::*;
