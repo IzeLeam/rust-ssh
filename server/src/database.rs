@@ -4,13 +4,11 @@ pub mod database {
     use std::fs::File;
     use std::io::{BufReader, BufWriter};
 
-    use::common::auth::AuthMethod;
-
     #[derive(Serialize, Deserialize)]
     pub struct User {
         pub username: String,
-        pub secret: String,
-        pub auth_method: AuthMethod,
+        pub password: String,
+        pub pubkey: String
     }
 
     #[derive(Serialize, Deserialize)]
@@ -21,36 +19,39 @@ pub mod database {
     const DB_FILE: &str = "users.json";
 
     impl User {
-        pub fn new(username: String, secret: String, auth_method: AuthMethod) -> Self {
+        pub fn _new(username: String, password: String, pubkey: String) -> Self {
             User {
                 username,
-                secret,
-                auth_method,
+                password,
+                pubkey,
             }
         }
     }
 
     impl Database {
         pub fn new() -> Self {
+            if File::open(DB_FILE).is_err() {
+                File::create(DB_FILE).expect("Erreur de création de la base de données");
+            }
             Database {
                 users: HashMap::new(),
             }
         }
 
-        pub fn add_user(&mut self, username: String, secret: String, auth_method: AuthMethod) -> Result<(), String> {
+        pub fn add_user(&mut self, username: String, password: String, pubkey: String) -> Result<(), String> {
             if self.users.contains_key(&username) {
                 return Err(String::from("L'utilisateur existe déjà"));
             }
             let user = User {
                 username: username.clone(),
-                secret,
-                auth_method,
+                password,
+                pubkey,
             };
             self.users.insert(username, user);
             Ok(())
         }
 
-        pub fn remove_user(&mut self, username: &str) {
+        pub fn _remove_user(&mut self, username: &str) {
             self.users.remove(username);
         }
 
@@ -91,33 +92,28 @@ pub mod database {
 mod tests {
     use super::*;
     use database::Database;
-    use common::auth::AuthMethod;
 
     #[test]
     fn test_add_user() {
         let mut db = Database::new();
-        db.add_user("user1".to_string(), "password1".to_string(), AuthMethod::Password).unwrap();
-        assert_eq!(db.users.len(), 1);
-        assert!(db.users.contains_key("user1"));
-        assert_eq!(db.users["user1"].secret, "password1");
-        assert_eq!(db.users["user1"].auth_method, AuthMethod::Password);
+        let username = "testuser".to_string();
+        let password = "testpassword".to_string();
+        let pubkey = "testpubkey".to_string();
+        db.add_user(username.clone(), password.clone(), pubkey.clone()).unwrap();
+        let user = db.get_user(&username).unwrap();
+        assert_eq!(user.username, username);
+        assert_eq!(user.password, password);
+        assert_eq!(user.pubkey, pubkey);
     }
     #[test]
     fn test_remove_user() {
         let mut db = Database::new();
-        db.add_user("user1".to_string(), "password1".to_string(), AuthMethod::Password).unwrap();
-        db.remove_user("user1");
-        assert_eq!(db.users.len(), 0);
-        assert!(!db.users.contains_key("user1"));
-    }
-    #[test]
-    fn test_get_user() {
-        let mut db = Database::new();
-        db.add_user("user1".to_string(), "password1".to_string(), AuthMethod::Password).unwrap();
-        let user = db.get_user("user1").unwrap();
-        assert_eq!(user.username, "user1");
-        assert_eq!(user.secret, "password1");
-        assert_eq!(user.auth_method, AuthMethod::Password);
+        let username = "testuser".to_string();
+        let password = "testpassword".to_string();
+        let pubkey = "testpubkey".to_string();
+        db.add_user(username.clone(), password.clone(), pubkey.clone()).unwrap();
+        db._remove_user(&username);
+        assert!(db.get_user(&username).is_none());
     }
     #[test]
     fn test_load_users() {
@@ -128,14 +124,13 @@ mod tests {
     #[test]
     fn test_save_users() {
         let mut db = Database::new();
-        db.add_user("user1".to_string(), "password1".to_string(), AuthMethod::Password).unwrap();
+        let username = "testuser".to_string();
+        let password = "testpassword".to_string();
+        let pubkey = "testpubkey".to_string();
+        db.add_user(username.clone(), password.clone(), pubkey.clone()).unwrap();
         db.save_users();
-        let mut db2 = Database::new();
-        db2.load_users();
-        assert_eq!(db2.users.len(), 1);
-        assert!(db2.users.contains_key("user1"));
-        assert_eq!(db2.users["user1"].secret, "password1");
-        assert_eq!(db2.users["user1"].auth_method, AuthMethod::Password);
+        let mut new_db = Database::new();
+        new_db.load_users();
+        assert_eq!(new_db.get_user(&username).unwrap().username, username);
     }
-    
 }

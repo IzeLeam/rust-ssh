@@ -1,44 +1,137 @@
 pub mod filesys {
-    #[derive(Debug)]
+    #[derive(Debug, Clone, PartialEq)]
     pub enum NodeType {
         File,
         Directory,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct Node {
         pub name: String,
         pub node_type: NodeType,
-        pub children: Option<Vec<Node>>, // None si c'est un fichier
+        pub parent: Option<Box<Node>>,
+        pub children: Option<Vec<Node>>,
     }
 
     impl Node {
-        // Constructeur pour un fichier
         pub fn new_file(name: String) -> Self {
             Node {
                 name,
                 node_type: NodeType::File,
+                parent: None,
                 children: None,
             }
         }
 
-        // Constructeur pour un dossier
         pub fn new_directory(name: String) -> Self {
             Node {
                 name,
                 node_type: NodeType::Directory,
+                parent: None,
                 children: Some(Vec::new()),
             }
         }
 
-        // Ajouter un enfant à un dossier
-        pub fn add_child(&mut self, child: Node) {
+        pub fn add_child(&mut self, child: &mut Node) {
             if let Some(children) = &mut self.children {
-                children.push(child);
+                children.push(child.clone());
+                child.parent = Some(Box::new(self.clone()));
             } else {
                 panic!("Cannot add a child to a file node");
             }
         }
-    }
-}
 
+        pub fn _get_children(&self) -> Option<&Vec<Node>> {
+            self.children.as_ref()
+        }
+
+        pub fn pwd(&self) -> String {
+            let mut path = String::new();
+            let mut current_node = self;
+
+            while let Some(parent) = &current_node.parent {
+                println!("Current node: {:?}", current_node.name);
+                path = format!("/{}", current_node.name) + &path;
+                current_node = parent;
+            }
+            path
+        }
+
+        pub fn ls(&self) -> Vec<String> {
+            if let Some(children) = &self.children {
+                children.iter().map(|child| child.name.clone()).collect()
+            } else {
+                vec![]
+            }
+        }
+
+        pub fn cd(&self, name: &str) -> Option<Node> {
+            if name == ".." {
+                if let Some(parent) = &self.parent {
+                    return Some(*parent.clone());
+                } else {
+                    return None;
+                }
+            }
+
+            if let Some(children) = &self.children {
+                for child in children {
+                    if child.name == name  && child.node_type == NodeType::Directory {
+                        return Some(child.clone());
+                    }
+                }
+            }
+            None
+        }
+
+        pub fn tab_complete_arg(&self, start: &str) -> Vec<String> {
+            if let Some(children) = &self.children {
+                let mut completions = Vec::new();
+                for child in children {
+                    if child.name.starts_with(start) {
+                        completions.push(child.name.clone());
+                    }
+                }
+                completions
+            } else {
+                vec![]
+            }
+        }
+
+        pub fn tab_complete(&self, start: &str) -> Vec<String> {
+            let mut completions = Vec::new();
+            if let Some(children) = &self.children {
+                for child in children {
+                    if child.name.starts_with(start) {
+                        completions.push(child.name.clone());
+                    }
+                }
+            }
+            completions
+        }
+    }
+
+    pub fn create_tree() -> Node {
+        let mut root = Node::new_directory("root".to_string());
+        let mut dir1 = Node::new_directory("dir1".to_string());
+        let mut dir2 = Node::new_directory("dir2".to_string());
+        let mut dir3 = Node::new_directory("dir3".to_string());
+
+        let mut file1 = Node::new_file("file1.txt".to_string());
+        let mut file2 = Node::new_file("file2.txt".to_string());
+        let mut file3 = Node::new_file("file3.txt".to_string());
+        let mut file4 = Node::new_file("file4.txt".to_string());
+
+        dir1.add_child(&mut file1);
+        dir1.add_child(&mut file2);
+        dir2.add_child(&mut file3);
+        dir3.add_child(&mut file4);
+
+        root.add_child(&mut dir1);
+        root.add_child(&mut dir2);
+        root.add_child(&mut dir3);
+
+        root
+    }
+
+}
