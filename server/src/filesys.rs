@@ -1,4 +1,8 @@
 pub mod filesys {
+
+    use std::cell::RefCell;
+    use std::rc::{Rc, Weak};
+
     #[derive(Debug, Clone, PartialEq)]
     pub enum NodeType {
         File,
@@ -9,89 +13,113 @@ pub mod filesys {
     pub struct Node {
         pub name: String,
         pub node_type: NodeType,
-        pub parent: Option<Box<Node>>,
-        pub children: Option<Vec<Node>>,
+        pub parent: Option<Weak<RefCell<Node>>>,
+        pub children: Option<Vec<Rc<RefCell<Node>>>>,
     }
 
     impl Node {
-        pub fn new_file(name: String) -> Self {
-            Node {
+        pub fn new_file(name: String) -> Rc<RefCell<Self>> {
+            Rc::new(RefCell::new(Node {
                 name,
                 node_type: NodeType::File,
                 parent: None,
                 children: None,
-            }
+            }))
         }
 
-        pub fn new_directory(name: String) -> Self {
-            Node {
+        pub fn new_directory(name: String) -> Rc<RefCell<Self>> {
+            Rc::new(RefCell::new(Node {
                 name,
                 node_type: NodeType::Directory,
                 parent: None,
-                children: Some(Vec::new()),
-            }
+                children: Some(vec![]),
+            }))
         }
 
-        pub fn add_child(&mut self, child: &mut Node) {
-            if let Some(children) = &mut self.children {
-                child.parent = Some(Box::new(Node {
-                    name: self.name.clone(),
-                    node_type: self.node_type.clone(),
-                    parent: None, // Évite les cycles de références
-                    children: Some(children.clone()), // Clone les enfants ici
-                }));                
-                children.push(child.clone());
+        pub fn add_child(parent: &Rc<RefCell<Node>>, child: Rc<RefCell<Node>>) {
+            {
+                let mut child_mut = child.borrow_mut();
+                child_mut.parent = Some(Rc::downgrade(parent));
+            }
+    
+            let mut parent_mut = parent.borrow_mut();
+            if parent_mut.node_type == NodeType::Directory {
+                if let Some(children) = &mut parent_mut.children {
+                    children.push(child);
+                }
             } else {
                 panic!("Cannot add a child to a file node");
             }
         }
 
-        pub fn _get_children(&self) -> Option<&Vec<Node>> {
-            self.children.as_ref()
-        }
+        
 
-        pub fn pwd(&self) -> String {
-            let mut path = String::from("/");
-            let mut current_node = self;
-              
-            while let Some(parent) = &current_node.parent {
-                println!("Current node: {:?}", current_node.name);
-                path = format!("/{}", current_node.name) + &path;
-                current_node = parent;
+        
+        pub fn pwd(node: Rc<RefCell<Node>>) -> String {
+            let mut path = String::new();
+            let mut current_node = Some(node);
+    
+            while let Some(rc_node) = current_node {
+                let borrowed = rc_node.borrow();
+                path = format!("/{}", borrowed.name) + &path;
+                current_node = borrowed
+                    .parent
+                    .as_ref()
+                    .and_then(|weak_parent| weak_parent.upgrade());
             }
-            path
+    
+            if path.is_empty() {
+                "/".to_string()
+            } else {
+                path
+            }
         }
 
         // Probleme avec ls avec la suite de commande suivante : 
         // cd dir1 ; cd .. ; ls => La liste des enfants est vide donc le prog bloque 
         pub fn ls(&self) -> Vec<String> {
-            if let Some(children) = &self.children {
-                children.iter().map(|child| child.name.clone()).collect()
+            if self.node_type == NodeType::Directory {
+                if let Some(children) = &self.children {
+                    children.iter()
+                        .map(|child| child.borrow().name.clone())
+                        .collect()
+                } else {
+                    vec![]
+                }
             } else {
-                println!("No children");
+                println!("This node is not a directory");
                 vec![]
             }
         }
-
-        pub fn cd(&self, name: &str) -> Option<Node> {
+        
+        pub fn cd(current: &Rc<RefCell<Node>>, name: &str) -> Option<Rc<RefCell<Node>>> {
+            let current_borrowed = current.borrow();
+    
             if name == ".." {
-                if let Some(parent) = &self.parent {
-                    println!("Parent directory: {:?}", parent.name);
-                    return Some(*parent.clone());
+                if let Some(ref weak_parent) = current_borrowed.parent {
+                    if let Some(parent_rc) = weak_parent.upgrade() {
+                        println!("Parent directory: {:?}", parent_rc.borrow().name);
+                        return Some(parent_rc);
+                    } else {
+                        println!("Parent has been dropped");
+                        return None;
+                    }
                 } else {
                     println!("No parent directory");
                     return None;
                 }
             }
-
-            if let Some(children) = &self.children {
+    
+            if let Some(children) = &current_borrowed.children {
                 for child in children {
-                    if child.name == name  && child.node_type == NodeType::Directory {
-                        return Some(child.clone());
+                    let child_borrowed = child.borrow();
+                    if child_borrowed.name == name && child_borrowed.node_type == NodeType::Directory {
+                        return Some(Rc::clone(child));
                     }
                 }
             }
-            println!("None returned");
+    
+            println!("Directory '{}' not found", name);
             None
         }
 
@@ -99,8 +127,8 @@ pub mod filesys {
             if let Some(children) = &self.children {
                 let mut completions = Vec::new();
                 for child in children {
-                    if child.name.starts_with(start) {
-                        completions.push(child.name.clone());
+                    if child.borrow().name.starts_with(start) {
+                        completions.push(child.borrow().name.clone());
                     }
                 }
                 completions
@@ -113,8 +141,8 @@ pub mod filesys {
             let mut completions = Vec::new();
             if let Some(children) = &self.children {
                 for child in children {
-                    if child.name.starts_with(start) {
-                        completions.push(child.name.clone());
+                    if child.borrow().name.starts_with(start) {
+                        completions.push(child.borrow().name.clone());
                     }
                 }
             }
@@ -122,27 +150,27 @@ pub mod filesys {
         }
     }
 
-    pub fn create_tree() -> Node {
-        let mut root = Node::new_directory("root".to_string());
-        let mut dir1 = Node::new_directory("dir1".to_string());
-        let mut dir2 = Node::new_directory("dir2".to_string());
-        let mut dir3 = Node::new_directory("dir3".to_string());
-
-        let mut file1 = Node::new_file("file1.txt".to_string());
-        let mut file2 = Node::new_file("file2.txt".to_string());
-        let mut file3 = Node::new_file("file3.txt".to_string());
-        let mut file4 = Node::new_file("file4.txt".to_string());
-
-        dir1.add_child(&mut file1);
-        dir1.add_child(&mut file2);
-        dir2.add_child(&mut file3);
-        dir3.add_child(&mut file4);
-
-        root.add_child(&mut dir1);
-        root.add_child(&mut dir2);
-        root.add_child(&mut dir3);
-
+    pub fn create_tree() -> Rc<RefCell<Node>> {
+        let root = Node::new_directory("root".to_string());
+    
+        let dir1 = Node::new_directory("dir1".to_string());
+        let dir2 = Node::new_directory("dir2".to_string());
+        let dir3 = Node::new_directory("dir3".to_string());
+    
+        let file1 = Node::new_file("file1.txt".to_string());
+        let file2 = Node::new_file("file2.txt".to_string());
+        let file3 = Node::new_file("file3.txt".to_string());
+        let file4 = Node::new_file("file4.txt".to_string());
+    
+        Node::add_child(&dir1, file1);
+        Node::add_child(&dir1, file2);
+        Node::add_child(&dir2, file3);
+        Node::add_child(&dir3, file4);
+    
+        Node::add_child(&root, dir1);
+        Node::add_child(&root, dir2);
+        Node::add_child(&root, dir3);
+    
         root
     }
-
 }

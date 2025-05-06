@@ -13,7 +13,11 @@ use std::io::{Error, ErrorKind};
 use std::sync::Arc;
 
 mod filesys;
-use crate::filesys::filesys::{Node, create_tree};
+use crate::filesys::filesys::*;
+
+use std::rc::Rc;
+use std::sync::Weak;
+use std::cell::RefCell;
 
 mod database;
 use crate::database::database::Database;
@@ -47,20 +51,18 @@ async fn authenticate_client(auth_message: Auth, db: &Arc<Mutex<Database>>) -> s
     }
 }
 
-async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<String, String> {
+async fn process_command(command: String, node: Arc<Mutex<Rc<RefCell<Node>>>>) -> Result<String, String> {
     let mut parts = command.trim().split_whitespace();
 
     match parts.next() {
         Some("pwd") => {
             let node_guard = node.lock().await;
-            Ok(node_guard.pwd())
+            Ok(Node::pwd(Rc::clone(&node_guard)))
         },
         Some("cd") => {
             if let Some(dir) = parts.next() {
-                if let Some(new_node) = {
-                    let node_guard = node.lock().await;
-                    node_guard.cd(dir)
-                } {
+                let current = node.lock().await;
+                if let Some(new_node) = Node::cd(&current, dir) {
                     *node.lock().await = new_node;
                     Ok(format!("Changed directory to: {}", dir))
                 } else {
@@ -69,10 +71,11 @@ async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<Stri
             } else {
                 Err("No directory specified".into())
             }
-        }
+        },
         Some("ls") => {
-            let node_guard = node.lock().await;
-            Ok(node_guard.ls().join(" "))
+            let current = node.lock().await;
+            let current_borrowed = current.borrow();
+            Ok(current_borrowed.ls().join(" "))
         },
         _ => Err("Unknown command".into()),
     }
