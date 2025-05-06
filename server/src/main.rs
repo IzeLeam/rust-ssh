@@ -57,11 +57,12 @@ async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<Stri
         },
         Some("cd") => {
             if let Some(dir) = parts.next() {
-                let node_guard = node.lock().await;
-                if let Some(new_node) = node_guard.cd(dir) {
-                    *node.lock().await = new_node;
+                if let Some(new_node) = {
                     let node_guard = node.lock().await;
-                    Ok(format!("Changed directory to: {}", node_guard.name))
+                    node_guard.cd(dir)
+                } {
+                    *node.lock().await = new_node;
+                    Ok(format!("Changed directory to: {}", dir))
                 } else {
                     Err("Directory not found".into())
                 }

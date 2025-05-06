@@ -34,8 +34,13 @@ pub mod filesys {
 
         pub fn add_child(&mut self, child: &mut Node) {
             if let Some(children) = &mut self.children {
+                child.parent = Some(Box::new(Node {
+                    name: self.name.clone(),
+                    node_type: self.node_type.clone(),
+                    parent: None, // Évite les cycles de références
+                    children: Some(children.clone()), // Clone les enfants ici
+                }));                
                 children.push(child.clone());
-                child.parent = Some(Box::new(self.clone()));
             } else {
                 panic!("Cannot add a child to a file node");
             }
@@ -46,9 +51,9 @@ pub mod filesys {
         }
 
         pub fn pwd(&self) -> String {
-            let mut path = String::new();
+            let mut path = String::from("/");
             let mut current_node = self;
-
+              
             while let Some(parent) = &current_node.parent {
                 println!("Current node: {:?}", current_node.name);
                 path = format!("/{}", current_node.name) + &path;
@@ -57,10 +62,13 @@ pub mod filesys {
             path
         }
 
+        // Probleme avec ls avec la suite de commande suivante : 
+        // cd dir1 ; cd .. ; ls => La liste des enfants est vide donc le prog bloque 
         pub fn ls(&self) -> Vec<String> {
             if let Some(children) = &self.children {
                 children.iter().map(|child| child.name.clone()).collect()
             } else {
+                println!("No children");
                 vec![]
             }
         }
@@ -68,8 +76,10 @@ pub mod filesys {
         pub fn cd(&self, name: &str) -> Option<Node> {
             if name == ".." {
                 if let Some(parent) = &self.parent {
+                    println!("Parent directory: {:?}", parent.name);
                     return Some(*parent.clone());
                 } else {
+                    println!("No parent directory");
                     return None;
                 }
             }
@@ -81,6 +91,7 @@ pub mod filesys {
                     }
                 }
             }
+            println!("None returned");
             None
         }
 
