@@ -8,6 +8,20 @@ use std::io::Write;
 
 use common::auth::AuthMethod;
 use common::protocol::TypedMessage;
+use common::protocol::ClientState;
+
+use rustls::ClientConfig;
+use rustls::RootCertStore;
+use tokio_rustls::TlsConnector;
+use std::fs::File;
+use rustls_pemfile;
+use std::sync::Arc;
+
+use rustls::ServerName;
+use rustls::Certificate;
+use std::convert::TryFrom;
+use std::io::BufReader as StdBufReader;
+use rustls_pemfile as pem;
 
 /// Command parsing
 #[derive(Parser)]
@@ -23,84 +37,134 @@ pub struct Cli {
     pubkey: Option<PathBuf>,
 }
 
+fn load_root(p: &str) -> Result<RootCertStore, Box<dyn std::error::Error>> {
+    let mut s = RootCertStore::empty();
+    let mut r = StdBufReader::new(File::open(p)?);
+    for cert_result in pem::certs(&mut r) {
+        match cert_result {
+            Ok(cert) => { let _ = s.add(&Certificate(cert.as_ref().to_vec())); },
+            Err(e) => return Err(Box::new(e)),
+        }
+    }
+    Ok(s)
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    
-    let tcp_stream = TcpStream::connect(get_address()).await.expect("Erreur de connexion au serveur");
-    let (mut read_half, mut write_half) = tcp_stream.into_split();
 
-    // Authentication
-    match cli.pubkey {
-        Some(_path) => {
-            println!("Not implemented yet");
-            std::process::exit(1);
-        },
-        None => {
-            let password = prompt_password("Enter your passsword: ").unwrap();
-            let message_type = TypedMessage::new_auth(AuthMethod::Password, cli.username, password);
-            let serialized_message = serde_json::to_string(&message_type).unwrap();
-            write_half.write_all(serialized_message.as_bytes()).await.expect("Erreur d'écriture dans le serveur");
-        }
-    }
+    let roots = load_root("../certs/root-ca.pem").unwrap();
+    let cfg = ClientConfig::builder().with_safe_defaults().with_root_certificates(roots).with_no_client_auth();
 
-    let mut write_buffer = String::new();
-    let mut read_buffer: [u8; 1024] = [0; 1024];
+    let tcp = TcpStream::connect(get_address()).await.expect("Erreur de connexion au serveur");
 
-    // Read the server response
-    let size = read_half.read(&mut read_buffer).await.expect("Erreur de lecture depuis le serveur");
-    let serialized_message: TypedMessage = serde_json::from_slice(&read_buffer[..size]).unwrap();
-    match serialized_message {
-        TypedMessage::AuthResponse(b) => {
-            if b {
-                println!("Authenticated");
-            } else {
-                println!("Authentication failed");
-                return;
+    let mut stream=TlsConnector::from(Arc::new(cfg)).connect(ServerName::try_from("localhost").unwrap(), tcp).await.unwrap();
+
+    let mut stdin_buffer = String::new();
+    let mut buffer: [u8; 1024] = [0; 1024];
+
+    let mut state: ClientState = ClientState::Authentication(0);
+
+    loop {
+        // Client command
+        stdin_buffer.clear();
+        match state {
+            ClientState::Authentication(_) => {
+                // Authentication
+                match cli.pubkey {
+                    Some(_path) => {
+                        println!("Not implemented yet");
+                        return;
+                    },
+                    None => {
+                        let password = prompt_password("Enter your passsword: ").unwrap();
+                        let message_type = TypedMessage::Auth 
+                        { auth_method: AuthMethod::Password, username: cli.username.clone(), secret: password };
+                        let serialized_message = serde_json::to_string(&message_type).unwrap();
+                        stream.write_all(serialized_message.as_bytes()).await.expect("Erreur d'écriture dans le serveur");
+                    }
+                }
+            }
+            ClientState::Connected => {
+                print!("> ");
+                std::io::stdout().flush().unwrap();
+                std::io::stdin().read_line(&mut stdin_buffer).expect("Erreur de lecture de la ligne");
+                // TODO récupération char par char pour le tab completion
+
+                if stdin_buffer.is_empty() || stdin_buffer.trim().is_empty() {
+                    continue;
+                }
+                // Send the command
+                let command_str = stdin_buffer.trim();
+                let message = TypedMessage::Command { command: command_str.to_string() };
+                let serialized_message = serde_json::to_string(&message).unwrap();
+                stream.write_all(serialized_message.as_bytes()).await.expect("Erreur d'écriture dans le serveur");
             }
         }
-        _ => {
-            println!("Unexpected message type");
-            return;
-        }
-    }
-    
-    println!("Enter a command (exit to quit) :");
-    loop {
-        // Read command from stdin
-        write_buffer.clear();
-        std::io::stdout().write(b"> ").unwrap();
-        std::io::stdout().flush().unwrap();
-        std::io::stdin().read_line(&mut write_buffer).expect("Erreur de lecture de la ligne");
-        if write_buffer.is_empty() || write_buffer.trim().is_empty() {
-            continue;
-        }
 
-        // Send the command
-        let command_str = write_buffer.trim();
-        let message = TypedMessage::new_command(command_str.to_string());
-        let serialized_message = serde_json::to_string(&message).unwrap();
-        write_half.write_all(serialized_message.as_bytes()).await.expect("
-    TypedMessage,
-    Command,
-    Auth,
-};Erreur d'écriture dans le serveur");
-
-        // Get the server response
-        read_buffer.fill(0);
-        match read_half.read(&mut read_buffer).await {
+        // Server response
+        buffer.fill(0);
+        let size = match stream.read(&mut buffer).await {
             Ok(size) => {
                 if size == 0 {
-                    println!("Connection closed");
+                    println!("Disconnected");
                     return;
                 }
-
-                let utf8_string = String::from_utf8_lossy(&read_buffer[..size]);
-                println!("Server: {}", utf8_string);
+                size
             }
+            Err(_) => {
+                println!("Disconnected");
+                return;
+            }
+        };
+
+        let serialized_message: TypedMessage = match serde_json::from_slice(&buffer[..size]) {
+            Ok(msg) => msg,
             Err(e) => {
-                println!("Erreur en lisant depuis le serveur : {}", e);
-                break;
+                println!("Failed to parse message: {}", e);
+                continue;
+            }
+        };
+
+        match state {
+            ClientState::Authentication(attemps) => {
+                match serialized_message {
+                    TypedMessage::AuthResponse { success } => {
+                        if success {
+                            println!("Authenticated");
+                            state = ClientState::Connected;
+                        } else {
+                            println!("Authentication failed");
+                            state = ClientState::Authentication(attemps + 1);
+                            if attemps == 2 {
+                                println!("Too many attempts");
+                                return;
+                            }
+                        }
+                    }
+                    _ => {
+                        println!("Unexpected message type");
+                        return;
+                    }
+                }
+            }
+            ClientState::Connected => {
+                match serialized_message {
+                    TypedMessage::CommandResponse { response, success } => {
+                        if success {
+                            println!("{}", response);
+                        } else {
+                            println!("Error: {}", response);
+                        }
+                    },
+                    TypedMessage::TabCompleteResponse { completions} => {
+                        println!("Completions: {:?}", completions);
+                    },
+                    _ => {
+                        println!("Unexpected message type");
+                        return;
+                    }
+                }
             }
         }
     }

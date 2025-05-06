@@ -1,6 +1,5 @@
-use common::{auth::{self, Authenticator}, network::{self, get_address}, protocol::TypedMessage};
+use common::{crypto::{hash_password, verify_password}, network::{self, get_address}, protocol::TypedMessage};
 use common::auth::AuthMethod;
-use common::protocol::Auth;
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -8,9 +7,12 @@ use tokio::{
     sync::Mutex,
     spawn,
 };
-
-use std::io::{Error, ErrorKind};
 use std::sync::Arc;
+use std::io::{Error, ErrorKind};
+
+use tokio_rustls::{server::TlsStream, TlsAcceptor};
+use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig};
+use std::{fs::File, io::BufReader};
 
 mod filesys;
 use crate::filesys::filesys::{Node, create_tree};
@@ -18,27 +20,24 @@ use crate::filesys::filesys::{Node, create_tree};
 mod database;
 use crate::database::database::Database;
 
-async fn authenticate_client(auth_message: Auth, db: &Arc<Mutex<Database>>) -> std::io::Result<()> {
+async fn authenticate_client(auth_method: AuthMethod, username: String, secret: String, db: &Arc<Mutex<Database>>) -> std::io::Result<()> {
     let mut db_guard = db.lock().await;
-    let user = db_guard.get_user(&auth_message.username);
+    let user = db_guard.get_user(&username);
 
-    match auth_message.auth_method {
+    match auth_method {
         AuthMethod::Password => {
             if user.is_none() {
-                let _ = db_guard.add_user(auth_message.username, auth_message.secret.clone(), String::new());
+                let hash = hash_password(secret.as_str());
+                let _ = db_guard.add_user(username, hash.clone(), String::new());
                 db_guard.save_users();
                 return Ok(());
             }
-            let saved_password = user.unwrap().password.clone();
-            let password = auth_message.secret;
-            let authenticator = auth::PasswordAuth {
-                password: saved_password.to_string(),
-            };
-            authenticator.authenticate(password.clone().as_str()).then(|| {
-                Ok(())
-            }).ok_or_else(|| {
-                Error::new(ErrorKind::PermissionDenied, "Authentication failed")
-            })?
+            let hash = user.unwrap().password.clone();
+            if verify_password(secret.as_str(), hash.as_str()) {
+                return Ok(());
+            } else {
+                return Err(Error::new(ErrorKind::Other, "Invalid password"));
+            }
         }
         AuthMethod::Certificate => {
             println!("Authenticating with certificate");
@@ -77,67 +76,80 @@ async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<Stri
     }
 }
 
-async fn handle_client(mut stream: TcpStream, node: Arc<Mutex<Node>>, db: Arc<Mutex<Database>>) -> std::io::Result<()> {
-    let mut buffer = [0; 512];
+async fn handle_client(mut stream: TlsStream<TcpStream>, root: Arc<Mutex<Node>>, db: Arc<Mutex<Database>>) -> std::io::Result<()> {
+    let node = root.clone();
+    let peer_addr = stream.get_ref().0.peer_addr().unwrap();
+
+    let mut buffer = [0; 1024];
     loop {
+        buffer.fill(0);
         match stream.read(&mut buffer).await {
             Ok(size) => {
                 if size == 0 {
-                    println!("Client disconnected : {:?}", stream.peer_addr().unwrap());
+                    println!("Client disconnected : {:?}", peer_addr);
                     return Ok(());
                 }
 
-                let serialized_message: TypedMessage = serde_json::from_slice(&buffer[..size]).unwrap();
+                let serialized_message: TypedMessage = match serde_json::from_slice(&buffer[..size]) {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        println!("Failed to parse message: {}", e);
+                        continue;
+                    }
+                };
 
                 match serialized_message {
-                    TypedMessage::Command(command) => {
-                        match command.command.as_str() {
+                    TypedMessage::Command { command } => {
+                        match command.as_str() {
                             "exit" => {
-                                println!("Client disconnected : {:?}", stream.peer_addr().unwrap());
+                                println!("Client disconnected : {:?}", peer_addr);
                                 return Ok(());
                             }
-                            _ => match process_command(command.command, node.clone()).await{
+                            _ => match process_command(command, node.clone()).await{
                                 Ok(response) => {
-                                    stream.write_all(response.as_bytes()).await?;
+                                    let command_response = TypedMessage::CommandResponse { response: response, success: true };
+                                    let serialized_response = serde_json::to_string(&command_response).unwrap();
+                                    stream.write_all(serialized_response.as_bytes()).await?;
                                 },
                                 Err(reponse) => {
-                                    stream.write_all(reponse.as_bytes()).await?;
+                                    let command_response = TypedMessage::CommandResponse { response: reponse, success: false };
+                                    let serialized_response = serde_json::to_string(&command_response).unwrap();
+                                    stream.write_all(serialized_response.as_bytes()).await?;
                                 }
                             }
                         }
                     },
-                    TypedMessage::TabComplete(start) => {
-                        if start.split(' ').count() > 1 {
-                            let mut parts = start.split_whitespace();
+                    TypedMessage::TabComplete { stdin } => {
+                        if stdin.split(' ').count() > 1 {
+                            let mut parts = stdin.split_whitespace();
                             let last_part = parts.next_back().unwrap();
                             let node_guard = node.lock().await;
                             let completions = node_guard.tab_complete_arg(last_part);
-                            let response = TypedMessage::TabCompleteResponse(completions);
+                            let response = TypedMessage::TabCompleteResponse { completions: completions };
                             let serialized_response = serde_json::to_string(&response).unwrap();
                             stream.write_all(serialized_response.as_bytes()).await?;
                         } else {
                             let node_guard = node.lock().await;
-                            let completions = node_guard.tab_complete(&start);
+                            let completions = node_guard.tab_complete(&stdin);
 
-                            let response = TypedMessage::TabCompleteResponse(completions);
+                            let response = TypedMessage::TabCompleteResponse { completions: completions };
                             let serialized_response = serde_json::to_string(&response).unwrap();
                             stream.write_all(serialized_response.as_bytes()).await?;
                         }
                     },
-                    TypedMessage::Auth(auth_message) => {
-                        match authenticate_client(auth_message, &db).await {
+                    TypedMessage::Auth { auth_method, username, secret } => {
+                        match authenticate_client(auth_method, username, secret, &db).await {
                             Ok(_) => {
-                                println!("Client authenticated : {:?}", stream.peer_addr().unwrap());
-                                let response = TypedMessage::AuthResponse(true);
+                                println!("Client authenticated : {:?}", peer_addr);
+                                let response = TypedMessage::AuthResponse { success: true };
                                 let serialized_response = serde_json::to_string(&response).unwrap();
                                 stream.write_all(serialized_response.as_bytes()).await?;
                             }
                             Err(_) => {
-                                println!("Client failed authentication : {:?}", stream.peer_addr().unwrap());
-                                let response = TypedMessage::AuthResponse(false);
+                                println!("Client failed authentication : {:?}", peer_addr);
+                                let response = TypedMessage::AuthResponse { success: false };
                                 let serialized_response = serde_json::to_string(&response).unwrap();
                                 stream.write_all(serialized_response.as_bytes()).await?;
-                                return Ok(());
                             }
                         }
                     },
@@ -152,6 +164,22 @@ async fn handle_client(mut stream: TcpStream, node: Arc<Mutex<Node>>, db: Arc<Mu
     }
 }
 
+
+fn load_certs(path: &str) -> Vec<Certificate> {
+    let certfile = File::open(path).unwrap();
+    let mut reader = BufReader::new(certfile);
+    rustls_pemfile::certs(&mut reader)
+        .unwrap()
+        .into_iter()
+        .map(Certificate)
+        .collect()
+}
+
+fn load_key(path: &str) -> Result<PrivateKey, Box<dyn std::error::Error>> {
+    let mut r = BufReader::new(File::open(path)?);
+    Ok(PrivateKey(rustls_pemfile::pkcs8_private_keys(&mut r)?.get(0).ok_or("No private keys found")?.clone()))
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
 
@@ -162,6 +190,17 @@ async fn main() -> std::io::Result<()> {
     }
     let node = Arc::new(Mutex::new(create_tree()));
 
+    let certs = load_certs("../certs/cert.pem");
+    let key = load_key("../certs/cert.key.pem");
+
+    let config = ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(certs, key.unwrap())
+        .unwrap();
+
+    let acceptor = Arc::new(TlsAcceptor::from(Arc::new(config)));
+
     let listener = TcpListener::bind(get_address()).await?;
     println!("Server started on port {}", network::SERVER_PORT);
 
@@ -171,8 +210,10 @@ async fn main() -> std::io::Result<()> {
 
         let node = std::sync::Arc::clone(&node);
         let db = std::sync::Arc::clone(&db);
+        let acceptor = Arc::clone(&acceptor);
         spawn(async move {
-            if let Err(e) = handle_client(stream, node, db).await {
+            let tls_stream = acceptor.accept(stream).await.unwrap();
+            if let Err(e) = handle_client(tls_stream, node, db).await {
                 eprintln!("Error handling client: {:?}", e);
             }
         });
