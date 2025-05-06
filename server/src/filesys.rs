@@ -10,7 +10,7 @@ pub mod filesys {
         pub name: String,
         pub node_type: NodeType,
         pub parent: Option<String>,
-        pub children: Option<Vec<String>>,
+        pub children: Option<Vec<Node>>,
     }
 
     impl Node {
@@ -34,21 +34,34 @@ pub mod filesys {
 
         pub fn add_child(&mut self, child: &mut Node) {
             if let Some(children) = &mut self.children {
-                children.push(child.name.clone());
+                children.push(child.clone());
                 child.parent = Some(self.name.clone());
             } else {
                 panic!("Cannot add a child to a file node");
             }
         }
 
-        
+        fn find_node(&self, name: &str) -> Option<Node> {
+            if self.name == name {
+                return Some(self.clone());
+            }
 
-        pub fn pwd(&self) -> String {
+            if let Some(children) = &self.children {
+                for child in children {
+                    if let Some(node) = child.find_node(name) {
+                        return Some(node);
+                    }
+                }
+            }
+            None
+        }
+
+        pub fn pwd(&self, current: &str) -> String {
             let mut path = String::from("/");
-            let mut current_name = self.name.clone();
+            let mut current_name = current.to_string();
 
             while current_name != "root".to_string() {
-                path = format!("{}/{}", current_name, path);
+                path = format!("{}/{}", path, current_name);
                 if let Some(parent) = &self.parent {
                     current_name = parent.clone();
                 } else {
@@ -56,18 +69,24 @@ pub mod filesys {
                 }
             }
 
-            path
+            return path;
         }
 
-        pub fn ls(&self) -> Vec<String> {
-            if let Some(children) = &self.children {
-                children.iter().map(|child| child.clone()).collect()
-            } else {
-                vec![]
+        pub fn ls(&self, current: &str) -> Vec<String> {
+            let n = self.find_node(current);
+            if let Some(node) = n {
+                if let Some(children) = &node.children {
+                    let mut names = Vec::new();
+                    for child in children {
+                        names.push(child.name.clone());
+                    }
+                    return names;
+                }
             }
+            vec![]
         }
 
-        pub fn cd(&self, name: &str) -> Option<String> {
+        pub fn cd(&self, current: &str, name: &str) -> Option<String> {
             if name == ".." {
                 if let Some(p) = &self.parent {
                     return Some(p.clone());
@@ -76,10 +95,13 @@ pub mod filesys {
                 }
             }
 
-            if let Some(childs) = &self.children {
-                for c in childs {
-                    if c == name  {
-                        return Some(c.clone());
+            let n = self.find_node(current);
+            if let Some(node) = n {
+                if let Some(children) = &node.children {
+                    for child in children {
+                        if child.name == name && child.node_type == NodeType::Directory {
+                            return Some(child.name.clone());
+                        }
                     }
                 }
             }
@@ -116,25 +138,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_tree() {
-        let root = filesys::create_tree();
-        assert_eq!(root.name, "root");
-        assert_eq!(root.node_type, filesys::NodeType::Directory);
-        assert_eq!(root.ls(), vec!["dir1", "dir2", "dir3"]);
-    }
-
-    #[test]
     fn test_ls() {
         let root = filesys::create_tree();
-        let dir1 = root.cd("dir1").unwrap();
-        //assert_eq!(dir1.ls(), vec!["file1.txt", "file2.txt"]);
+        let current = String::from("root");
+        assert_eq!(root.name, "root");
+        assert_eq!(root.node_type, filesys::NodeType::Directory);
+        assert_eq!(root.ls(&current), vec!["dir1", "dir2", "dir3"]);
     }
 
     #[test]
     fn test_cd() {
-        //let root = filesys::create_tree();
-        //let dir1 = root.cd("dir1").unwrap();
-        //let file1 = dir1.cd("file1.txt");
-        //assert!(file1.is_none());
+        let root = filesys::create_tree();
+        let current = root.cd("root", "dir1").unwrap();
+        assert_eq!(current, String::from("dir1"));
+    }
+
+    #[test]
+    fn test_cd_to_parent() {
+        let root = filesys::create_tree();
+        let current = root.cd("dir1", "..").unwrap();
+        assert_eq!(current, String::from("root"));
+    }
+
+    #[test]
+    fn test_pwd() {
+        let root = filesys::create_tree();
+        let current = String::from("dir1");
+        assert_eq!(root.pwd(&current), String::from("/dir1"));
     }
 }
