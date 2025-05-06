@@ -68,20 +68,21 @@ async fn authenticate_client(auth_method: AuthMethod, username: String, secret: 
 /// # Returns
 /// * `Ok(String)` if the command is successful
 /// * `Err(String)` if the command fails
-async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<String, String> {
+async fn process_command(command: String, root: Arc<Mutex<Node>>, current_node: &mut String) -> Result<String, String> {
     // Parse the command into args
     let mut parts = command.trim().split_whitespace();
 
     match parts.next() {
         Some("pwd") => {
-            let node_guard = node.lock().await;
-            Ok(Node::pwd(&node_guard).to_string())
+            let node_guard = root.lock().await;
+            Ok(node_guard.pwd(current_node))
         },
         Some("cd") => {
             if let Some(dir) = parts.next() {
-                let current = node.lock().await;
-                if let Some(new_node) = Node::cd(&current, dir) {
-                    *node.lock().await = new_node;
+                let current = root.lock().await;
+                
+                if let Some(new_node) = current.cd(current_node, dir) {
+                    *current_node = new_node;
                     Ok(format!("Changed directory to: {}", dir))
                 } else {
                     Err("Directory not found".into())
@@ -91,8 +92,8 @@ async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<Stri
             }
         },
         Some("ls") => {
-            let current = node.lock().await;
-            Ok(current.ls().join(" "))
+            let current = root.lock().await;
+            Ok(current.ls(current_node.as_str()).join(" "))
         },
         _ => Err("Unknown command".into()),
     }
@@ -108,10 +109,11 @@ async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<Stri
 /// * `Ok(())` if the connection is closed by the client
 /// * `Err(Error)` if any error
 async fn handle_client(mut stream: TlsStream<TcpStream>, root: Arc<Mutex<Node>>, db: Arc<Mutex<Database>>) -> std::io::Result<()> {
-    let node = root.clone();
     let peer_addr = stream.get_ref().0.peer_addr().unwrap();
-
     let mut buffer = [0; 1024];
+
+    let mut current_node = "root".to_string();
+
     loop {
         buffer.fill(0);
         match stream.read(&mut buffer).await {
@@ -139,7 +141,7 @@ async fn handle_client(mut stream: TlsStream<TcpStream>, root: Arc<Mutex<Node>>,
                                 return Ok(());
                             }
                             // The result (Ok or Err) of the command is sent to the client as the return code
-                            _ => match process_command(command, node.clone()).await{
+                            _ => match process_command(command, root.clone(), &mut current_node).await{
                                 // Send the response to the client with the command response and the return code
                                 Ok(response) => {
                                     let command_response = TypedMessage::CommandResponse { response: response, success: true };
