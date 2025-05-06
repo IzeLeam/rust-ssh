@@ -80,6 +80,7 @@ async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<Stri
         Some("cd") => {
             if let Some(dir) = parts.next() {
                 let current = node.lock().await;
+                
                 if let Some(new_node) = Node::cd(&current, dir) {
                     *node.lock().await = new_node;
                     Ok(format!("Changed directory to: {}", dir))
@@ -110,8 +111,10 @@ async fn process_command(command: String, node: Arc<Mutex<Node>>) -> Result<Stri
 async fn handle_client(mut stream: TlsStream<TcpStream>, root: Arc<Mutex<Node>>, db: Arc<Mutex<Database>>) -> std::io::Result<()> {
     let node = root.clone();
     let peer_addr = stream.get_ref().0.peer_addr().unwrap();
-
     let mut buffer = [0; 1024];
+
+    let current_node_name = root.lock().await.name.clone();
+
     loop {
         buffer.fill(0);
         match stream.read(&mut buffer).await {
