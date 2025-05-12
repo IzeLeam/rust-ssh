@@ -1,6 +1,7 @@
 <div align="center">
   <img src=".github/icon.png" alt="Rust-SSH" width="300" height="300">
 </div>
+
 # 🛡️ RustSSH - Remote Administration Tool
 
 A secure SSH-like remote administration tool written in **Rust** that allows users to execute commands on a remote server through an **encrypted connection**.
