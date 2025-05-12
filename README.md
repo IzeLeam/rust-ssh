@@ -1,5 +1,5 @@
 <div align="center">
-  <img src=".github/icon" alt="Rust-SSH" width="300" height="300">
+  <img src=".github/icon.png" alt="Rust-SSH" width="300" height="300">
 </div>
 # 🛡️ RustSSH - Remote Administration Tool
 
